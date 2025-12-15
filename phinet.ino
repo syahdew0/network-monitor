@@ -6,13 +6,6 @@
 #include <time.h>
 #include <nvs_flash.h>
 
-#include <WebServer.h>   // web server kecil untuk OTA
-#include <HTTPUpdate.h>  // httpUpdate.update(...) untuk OTA
-
-// ===== FIRMWARE OTA INFO =====
-#define FW_VERSION   "1.0.0"
-const char* FW_CHECK_URL = "https://ota-network.phisoft.co.id/";
-
 // ===== PIN & CONFIG =====
 #define BTN_CFG_PIN   9      // Tombol BOOT di ESP32-C3
 #define LED_PIN       8      // LED indikator
@@ -40,17 +33,6 @@ struct AppConfig {
 } CFG;
 
 Preferences prefs;
-String DEVICE_MAC;
-
-// ===== OTA WEB SERVER (/fwupdate) =====
-WebServer fwServer(80);
-String fwLatestVersion;
-String fwLatestUrl;
-bool   fwUpdateAvailable = false;
-
-// Forward declare handler OTA
-void handleFwUpdatePage();
-void handleFwUpdateDo();
 
 // ===== LED INDICATORS =====
 void ledBlinkBoot() {
@@ -85,9 +67,6 @@ void onWiFiEvent(WiFiEvent_t event) {
       currentBackoffMs = RECONNECT_BASE_MS;
       Serial.print("[WiFi] Dapat IP: ");
       Serial.println(WiFi.localIP());
-      Serial.print("[INFO] Akses OTA: http://");
-      Serial.print(WiFi.localIP());
-      Serial.println("/fwupdate");
       break;
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
       wifiConnected = false;
@@ -147,9 +126,6 @@ bool longPressNow(uint16_t ms=3000) {
 bool runConfigPortalForced() {
   Serial.println("[CFG] FORCE AP mode...");
 
-  // Matikan web server OTA sementara supaya nggak clash porta
-  fwServer.stop();
-
   // LED indikator masuk mode setup
   ledBlinkAPMode();
 
@@ -208,11 +184,6 @@ bool runConfigPortalForced() {
   }
 
   digitalWrite(LED_PIN, HIGH); // LED solid = mode normal
-
-  // Start lagi web server OTA setelah keluar dari portal
-  fwServer.begin();
-  Serial.println("[FW] OTA server restarted on /fwupdate");
-
   return ok;
 }
 
@@ -230,20 +201,10 @@ bool sendHeartbeat() {
   }
 
   long rssi = WiFi.RSSI();
-  String ipStr = WiFi.localIP().toString();     // IP lokal
-  if (DEVICE_MAC.length() == 0) {
-    DEVICE_MAC = WiFi.macAddress();            // fallback kalau belum kebaca
-  }
-
-  // buffer agak diperbesar karena ada field tambahan
-  char payload[340];
+  char payload[200];
   snprintf(payload, sizeof(payload),
-           "{\"device_id\":\"%s\",\"ssid\":\"%s\",\"rssi\":%ld,\"ip\":\"%s\",\"mac\":\"%s\"}",
-           CFG.deviceId.c_str(),
-           WiFi.SSID().c_str(),
-           rssi,
-           ipStr.c_str(),
-           DEVICE_MAC.c_str());
+        "{\"device_id\":\"%s\",\"ssid\":\"%s\",\"rssi\":%ld}",
+        CFG.deviceId.c_str(), WiFi.SSID().c_str(), rssi);
 
   Serial.print("POST ke: "); Serial.println(CFG.endpoint);
   Serial.print("Payload: "); Serial.println(payload);
@@ -292,141 +253,6 @@ void tryReconnectIfNeeded() {
   }
 }
 
-// ===== OTA WEB HANDLERS: /fwupdate & /fwupdate/do =====
-void handleFwUpdatePage() {
-  String html;
-  html += "<h1>Firmware Update</h1>";
-  html += "<p>Current version: <b>";
-  html += FW_VERSION;
-  html += "</b></p>";
-
-  if (WiFi.status() != WL_CONNECTED) {
-    html += "<p style='color:red'>Device tidak terkoneksi ke internet.</p>";
-    html += "<p>Pastikan sudah tersambung ke Wi-Fi router.</p>";
-    fwServer.send(200, "text/html", html);
-    return;
-  }
-
-  // Panggil server OTA
-  WiFiClientSecure client;
-  client.setTimeout(HTTP_TIMEOUT_MS);
-  client.setInsecure();
-
-  HTTPClient http;
-  String url = String(FW_CHECK_URL) +
-               "?version=" + FW_VERSION +
-               "&device_id=" + CFG.deviceId;
-
-  Serial.print("[FW] Check update: ");
-  Serial.println(url);
-
-  if (!http.begin(client, url)) {
-    html += "<p style='color:red'>Gagal init HTTP ke server OTA.</p>";
-    fwServer.send(200, "text/html", html);
-    return;
-  }
-
-  int code = http.GET();
-  fwLatestVersion = "";
-  fwLatestUrl     = "";
-  fwUpdateAvailable = false;
-
-  if (code == 200) {
-    String body = http.getString();
-    Serial.printf("[FW] Resp %d: %s\n", code, body.c_str());
-
-    int idxVer = body.indexOf("\"latest_version\"");
-    int idxUrl = body.indexOf("\"firmware_url\"");
-    if (idxVer >= 0) {
-      int q1 = body.indexOf('"', idxVer + 16);
-      int q2 = body.indexOf('"', q1 + 1);
-      if (q1 > 0 && q2 > q1) {
-        fwLatestVersion = body.substring(q1 + 1, q2);
-      }
-    }
-    if (idxUrl >= 0) {
-      int q1 = body.indexOf('"', idxUrl + 14);
-      int q2 = body.indexOf('"', q1 + 1);
-      if (q1 > 0 && q2 > q1) {
-        fwLatestUrl = body.substring(q1 + 1, q2);
-      }
-    }
-
-    if (fwLatestVersion.length() && fwLatestUrl.length() &&
-        fwLatestVersion != String(FW_VERSION)) {
-      fwUpdateAvailable = true;
-    }
-  } else {
-    html += "<p style='color:red'>Gagal menghubungi server OTA (HTTP ";
-    html += String(code);
-    html += ").</p>";
-    http.end();
-    fwServer.send(200, "text/html", html);
-    return;
-  }
-  http.end();
-
-  if (!fwUpdateAvailable) {
-    html += "<p>No update available.</p>";
-    if (fwLatestVersion.length()) {
-      html += "<p>Latest version on server: <b>" + fwLatestVersion + "</b></p>";
-    }
-  } else {
-    html += "<p style='color:green'>Update Available!</p>";
-    html += "<p>Latest version: <b>" + fwLatestVersion + "</b></p>";
-    html += "<form method='POST' action='/fwupdate/do'>";
-    html += "<input type='hidden' name='url' value='" + fwLatestUrl + "'/>";
-    html += "<button>Click to Update</button>";
-    html += "</form>";
-  }
-
-  fwServer.send(200, "text/html", html);
-}
-
-void handleFwUpdateDo() {
-  if (WiFi.status() != WL_CONNECTED) {
-    fwServer.send(200, "text/html",
-      "<h1>Firmware Update</h1><p>Device tidak terkoneksi ke internet.</p>");
-    return;
-  }
-
-  String fwUrl = fwServer.arg("url");
-  if (!fwUrl.length()) fwUrl = fwLatestUrl;
-
-  if (!fwUrl.length()) {
-    fwServer.send(200, "text/html",
-      "<h1>Firmware Update</h1><p>Firmware URL tidak valid.</p>");
-    return;
-  }
-
-  fwServer.send(200, "text/html",
-    "<h1>Firmware Update</h1><p>Memulai update... Device akan reboot jika berhasil.</p>");
-
-  Serial.print("[FW] OTA from URL: ");
-  Serial.println(fwUrl);
-
-  WiFiClientSecure client;
-  client.setTimeout(HTTP_TIMEOUT_MS);
-  client.setInsecure();
-
-  httpUpdate.rebootOnUpdate(true);
-  t_httpUpdate_return ret = httpUpdate.update(client, fwUrl);
-
-  switch (ret) {
-    case HTTP_UPDATE_FAILED:
-      Serial.printf("[FW] OTA Failed. Error (%d): %s\n",
-        httpUpdate.getLastError(),
-        httpUpdate.getLastErrorString().c_str());
-      break;
-    case HTTP_UPDATE_NO_UPDATES:
-      Serial.println("[FW] No updates.");
-      break;
-    case HTTP_UPDATE_OK:
-      Serial.println("[FW] OTA OK, rebooting...");
-      break;
-  }
-}
-
 // ===== SETUP =====
 void setup() {
   pinMode(BTN_CFG_PIN, INPUT_PULLUP);
@@ -437,7 +263,6 @@ void setup() {
   unsigned long t0 = millis();
   while (!Serial && millis()-t0 < 5000) { delay(10); }
   Serial.println("Booting...");
-  Serial.printf("FW Version: %s\n", FW_VERSION);
   ledBlinkBoot();
 
   WiFi.mode(WIFI_STA);
@@ -445,46 +270,34 @@ void setup() {
   WiFi.setAutoReconnect(true);
   WiFi.onEvent(onWiFiEvent);
 
-  DEVICE_MAC = WiFi.macAddress();
-  Serial.print("[INFO] MAC: ");
-  Serial.println(DEVICE_MAC);
-
   loadConfig();
   syncTime();
 
   if (CFG.endpoint.length() == 0) {
-    Serial.println("[CFG] Endpoint kosong; tekan tombol BOOT 3 detik untuk masuk AP mode.");
-  }
+    runConfigPortalForced();
+  } else {
+    Serial.println("[WiFi] Connect dengan cred tersimpan...");
+    delay(300);
+    WiFi.begin();
 
-  Serial.println("[WiFi] Connect dengan cred tersimpan...");
-  delay(300);
-  WiFi.begin();
-
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
-    delay(250);
-    Serial.print(".");
-  }
-  Serial.println();
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[WiFi] Gagal konek; akan retry otomatis. Tekan BOOT 3 detik untuk AP.");
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
+      delay(250);
+      Serial.print(".");
+    }
+    Serial.println();
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("[WiFi] Gagal konek, buka AP...");
+      runConfigPortalForced();
+    }
   }
 
   nextReconnectAtMs = millis() + RECONNECT_BASE_MS;
   digitalWrite(LED_PIN, HIGH);
-
-  // === Start web server OTA (/fwupdate) ===
-  fwServer.on("/fwupdate", HTTP_GET, handleFwUpdatePage);
-  fwServer.on("/fwupdate/do", HTTP_POST, handleFwUpdateDo);
-  fwServer.begin();
-  Serial.println("[FW] OTA server started on /fwupdate");
 }
 
 // ===== LOOP =====
 void loop() {
-  // handle HTTP OTA server
-  fwServer.handleClient();
-
   static bool suppressRepeat = false;
   if (longPressNow(3000)) {
     if (!suppressRepeat) {
