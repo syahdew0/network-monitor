@@ -3,6 +3,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-ESP32--C3-blue?style=for-the-badge" alt="Platform ESP32-C3"/>
   <img src="https://img.shields.io/badge/Framework-Arduino-teal?style=for-the-badge" alt="Framework Arduino"/>
+  <img src="https://img.shields.io/badge/Version-1.0-orange?style=for-the-badge" alt="Version 1.0"/>
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License MIT"/>
 </p>
 
@@ -14,6 +15,8 @@
 - 📊 Pengumpulan data kekuatan sinyal (RSSI)
 - 🔔 Alerting ketika perangkat offline
 - 🏢 Monitoring jaringan di banyak lokasi secara terpusat
+- 🔄 **OTA Update** - Update firmware dari jarak jauh
+- ⚙️ **Remote Config** - Ubah konfigurasi perangkat secara remote
 
 ## ✨ Fitur Utama
 
@@ -27,6 +30,8 @@
 | 🔑 **Bearer Token Auth** | Autentikasi via Bearer Token (opsional) |
 | 💡 **LED Indicator** | Indikator visual untuk status perangkat |
 | 🔘 **Config Button** | Tombol reset untuk masuk ke mode konfigurasi |
+| 📡 **OTA Update** | Update firmware via remote server |
+| ⚙️ **Remote Actions** | Ubah nama, endpoint, interval dari jarak jauh |
 
 ## 📋 Persyaratan Hardware
 
@@ -51,12 +56,16 @@ Pastikan library berikut sudah terinstall di Arduino IDE:
 | WiFiClientSecure | Built-in | Sudah termasuk di ESP32 core |
 | HTTPClient | Built-in | Sudah termasuk di ESP32 core |
 | Preferences | Built-in | Sudah termasuk di ESP32 core |
+| Update | Built-in | Sudah termasuk di ESP32 core |
 | **WiFiManager** | Latest | Library Manager → "WiFiManager by tzapu" |
+| **ArduinoJson** | Latest | Library Manager → "ArduinoJson by Benoit Blanchon" |
 
-### Instalasi Library WiFiManager
+### Instalasi Library
 
 ```
-Arduino IDE → Tools → Manage Libraries → Cari "WiFiManager" → Install "WiFiManager by tzapu"
+Arduino IDE → Tools → Manage Libraries → Cari dan install:
+1. "WiFiManager" by tzapu
+2. "ArduinoJson" by Benoit Blanchon
 ```
 
 ## ⚙️ Instalasi
@@ -126,7 +135,8 @@ Perangkat mengirimkan POST request ke endpoint dengan payload JSON:
   "id": "phinet-a4cf12345678",
   "device_id": "Router-Lantai-1",
   "ssid": "Nama-WiFi-Terhubung",
-  "rssi": -45
+  "rssi": -45,
+  "v": "1.0"
 }
 ```
 
@@ -136,6 +146,7 @@ Perangkat mengirimkan POST request ke endpoint dengan payload JSON:
 | `device_id` | Nama perangkat (dikonfigurasi via WiFiManager) - backward compatible |
 | `ssid` | Nama WiFi yang terhubung |
 | `rssi` | Kekuatan sinyal dalam dBm |
+| `v` | Versi firmware |
 
 ### Headers
 
@@ -151,6 +162,79 @@ https://api.example.com/devices/heartbeat
 http://192.168.1.100:3000/api/heartbeat
 ```
 
+## 🔄 Remote Actions (OTA & Remote Config)
+
+Perangkat secara berkala (setiap 30 detik) mengecek remote server untuk pending actions.
+
+### Remote URL
+
+```
+https://ota-network.phisoft.co.id/
+```
+
+### Supported Actions
+
+| Action | Deskripsi | Value |
+|--------|-----------|-------|
+| `update` | Update firmware OTA | URL file .bin |
+| `changename` | Ubah nama device | Nama baru |
+| `changeendpoint` | Ubah heartbeat endpoint | URL endpoint baru |
+| `changeinterval` | Ubah interval heartbeat | Interval dalam detik |
+
+### Action Response Format
+
+```json
+{
+  "actionid": "1234",
+  "action": "update",
+  "value": "https://ota-network.phisoft.co.id/firmware/v1.1.bin",
+  "additional": {}
+}
+```
+
+### Action Flow
+
+1. Device GET actions dari `REMOTE_URL/remote.php?action=get_actions`
+2. Server mengembalikan pending action (jika ada)
+3. Device mengeksekusi action
+4. Device mengirim log ke `REMOTE_URL/remote.php?action=log`
+
+## 🖥️ Backend PHP
+
+File `remote.php` menyediakan API endpoint untuk:
+
+| Endpoint | Method | Deskripsi |
+|----------|--------|-----------|
+| `?action=get_actions` | POST | Ambil pending actions untuk device |
+| `?action=log` | POST | Simpan log hasil eksekusi action |
+| `?action=heartbeat` | POST | Terima heartbeat (alternatif) |
+| `?action=create_action` | POST | Buat action baru (admin) |
+| `?action=list_devices` | GET | List semua device (admin) |
+| `?action=get_device_actions` | GET | History action device (admin) |
+
+### Setup Backend
+
+1. Upload `remote.php` ke server
+2. Konfigurasi database di `remote.php`:
+   ```php
+   $DB_HOST = 'localhost';
+   $DB_NAME = 'your_database_name';
+   $DB_USER = 'your_username';
+   $DB_PASS = 'your_password';
+   ```
+3. Jalankan `schema.sql` untuk membuat tabel
+4. JANGAN meletakkan file network_password.json di lokasi yang bisa diakses secara publik di Production.
+
+## 🗄️ Database Schema
+
+Lihat file `schema.sql` untuk struktur tabel lengkap:
+
+- `device` - Data device
+- `device_actions` - Pending & history actions
+- `action_logs` - Log eksekusi action
+- `devicelogs` - Log status device
+- `heartbeats` - History heartbeat
+
 ## 💡 Indikator LED
 
 | Pola LED | Status |
@@ -158,6 +242,7 @@ http://192.168.1.100:3000/api/heartbeat
 | Kedip 3x (100ms) | Booting |
 | Kedip 10x (50ms) | Masuk mode AP/Konfigurasi |
 | Kedip 3x (200ms) | Konfigurasi tersimpan |
+| Kedip 5x (150ms) | OTA Update dimulai |
 | Menyala solid | Mode normal / Terhubung |
 | Mati | Tidak ada daya |
 
@@ -165,6 +250,8 @@ http://192.168.1.100:3000/api/heartbeat
 
 | Parameter | Nilai Default | Keterangan |
 |-----------|---------------|------------|
+| VERSION | `1.0` | Versi firmware |
+| REMOTE_URL | `https://ota-network.phisoft.co.id/` | Server remote management |
 | AP Name | `PhiNet-Setup` | SSID Access Point |
 | AP Password | `Admin123` | Password Access Point |
 | HTTP Timeout | 8000 ms | Timeout HTTP request |
@@ -174,6 +261,7 @@ http://192.168.1.100:3000/api/heartbeat
 | NTP Server 1 | `id.pool.ntp.org` | Server NTP utama |
 | NTP Server 2 | `pool.ntp.org` | Server NTP backup |
 | Default Interval | 60 detik | Interval heartbeat default |
+| Action Check Interval | 30 detik | Interval cek remote actions |
 
 ## 🔄 Mekanisme Auto-Reconnect
 
@@ -199,6 +287,13 @@ Ketika koneksi WiFi terputus, perangkat akan:
 3. Cek token autentikasi jika diperlukan
 4. Lihat Serial Monitor (115200 baud) untuk debug
 
+### OTA Update gagal
+
+1. Pastikan URL file .bin valid dan accessible
+2. Cek ukuran file tidak melebihi flash yang tersedia
+3. Pastikan koneksi internet stabil
+4. Lihat log di server untuk detail error
+
 ### LED tidak menyala
 
 1. Periksa koneksi LED ke GPIO 8
@@ -215,15 +310,29 @@ Buka Serial Monitor pada 115200 baud untuk melihat log:
 
 ```
 Booting...
+PhiNet Version: 1.0
 [WiFi] Connect dengan cred tersimpan...
 ......
 [WiFi] Dapat IP: 192.168.1.100
 [HB] Kirim heartbeat...
 POST ke: https://api.example.com/heartbeat
-Payload: {"id":"phinet-a4cf12345678","device_id":"Router-Lantai-1","ssid":"MyWiFi","rssi":-42}
+Payload: {"id":"phinet-a4cf12345678","device_id":"Router-Lantai-1","ssid":"MyWiFi","rssi":-42,"v":"1.0"}
 HTTP 200
 Resp: {"status":"ok"}
 Heartbeat OK
+[ACT] Check actions: https://ota-network.phisoft.co.id/remote.php?action=get_actions
+[ACT] Response: {}
+[ACT] Tidak ada action
+```
+
+## 📁 Struktur File
+
+```
+phinet/
+├── phinet.ino      # Main Arduino sketch
+├── remote.php      # PHP backend API
+├── schema.sql      # Database schema
+└── README.md       # Dokumentasi ini
 ```
 
 ## 📄 Lisensi

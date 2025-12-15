@@ -5,6 +5,12 @@
 #include <WiFiManager.h> // Library Manager: "WiFiManager by tzapu"
 #include <time.h>
 #include <nvs_flash.h>
+#include <Update.h>
+#include <ArduinoJson.h> // Library Manager: "ArduinoJson by Benoit Blanchon"
+
+// ===== VERSION & REMOTE =====
+const char* VERSION = "1.0";
+const char* REMOTE_URL = "https://ota-network.phisoft.co.id/";
 
 // ===== PIN & CONFIG =====
 #define BTN_CFG_PIN   9      // Tombol BOOT di ESP32-C3
@@ -22,6 +28,7 @@ const char* NTP2 = "pool.ntp.org";
 // ===== STATE =====
 volatile bool wifiConnected = false;
 unsigned long lastSendMs = 0;
+unsigned long lastActionCheckMs = 0;
 unsigned long nextReconnectAtMs = 0;
 unsigned long currentBackoffMs  = RECONNECT_BASE_MS;
 
@@ -53,6 +60,13 @@ void ledBlinkSave() {
   for (int i = 0; i < 3; i++) {
     digitalWrite(LED_PIN, LOW);  delay(200);
     digitalWrite(LED_PIN, HIGH); delay(200);
+  }
+}
+
+void ledBlinkUpdate() {
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(LED_PIN, HIGH); delay(150);
+    digitalWrite(LED_PIN, LOW);  delay(150);
   }
 }
 
@@ -113,6 +127,226 @@ void syncTime() {
   for (int i=0; i<20; i++) {
     if (time(nullptr) > 1700000000) break;
     delay(200);
+  }
+}
+
+// ===== REMOTE LOG =====
+void sendRemoteLog(const String& actionId, const String& msg) {
+  if (WiFi.status() != WL_CONNECTED) return;
+  
+  String hwId = defaultDeviceId();
+  String url = String(REMOTE_URL) + "remote.php?action=log";
+  
+  JsonDocument doc;
+  doc["id"] = hwId;
+  doc["actionid"] = actionId;
+  doc["msg"] = msg;
+  doc["v"] = VERSION;
+  
+  String payload;
+  serializeJson(doc, payload);
+  
+  Serial.print("[LOG] Kirim ke: "); Serial.println(url);
+  Serial.print("[LOG] Payload: "); Serial.println(payload);
+  
+  WiFiClientSecure client;
+  client.setTimeout(HTTP_TIMEOUT_MS);
+  client.setInsecure();
+  
+  HTTPClient http;
+  if (!http.begin(client, url)) {
+    Serial.println("[LOG] Gagal init HTTP");
+    return;
+  }
+  http.setConnectTimeout(HTTP_TIMEOUT_MS);
+  http.addHeader("Content-Type", "application/json");
+  
+  int code = http.POST(payload);
+  Serial.printf("[LOG] HTTP %d\n", code);
+  if (code > 0) {
+    Serial.print("[LOG] Resp: "); Serial.println(http.getString());
+  }
+  http.end();
+}
+
+// ===== OTA UPDATE =====
+bool performOTAUpdate(const String& actionId, const String& updateUrl) {
+  Serial.println("[OTA] Memulai update...");
+  Serial.print("[OTA] URL: "); Serial.println(updateUrl);
+  
+  ledBlinkUpdate();
+  
+  WiFiClientSecure client;
+  client.setTimeout(30000);
+  client.setInsecure();
+  
+  HTTPClient http;
+  if (!http.begin(client, updateUrl)) {
+    sendRemoteLog(actionId, "Gagal membuka koneksi ke URL update");
+    return false;
+  }
+  
+  http.setConnectTimeout(30000);
+  int code = http.GET();
+  
+  if (code != HTTP_CODE_OK) {
+    String errMsg = "HTTP error: " + String(code);
+    sendRemoteLog(actionId, errMsg);
+    http.end();
+    return false;
+  }
+  
+  int contentLength = http.getSize();
+  if (contentLength <= 0) {
+    sendRemoteLog(actionId, "Content-Length tidak valid");
+    http.end();
+    return false;
+  }
+  
+  String contentType = http.header("Content-Type");
+  if (contentType.indexOf("application/octet-stream") < 0 && 
+      contentType.indexOf("binary") < 0) {
+    Serial.printf("[OTA] Warning: Content-Type: %s\n", contentType.c_str());
+  }
+  
+  // Validasi berhasil
+  sendRemoteLog(actionId, "Validasi berhasil, Update dimulai...");
+  
+  if (!Update.begin(contentLength)) {
+    String errMsg = "Update.begin gagal: " + String(Update.errorString());
+    sendRemoteLog(actionId, errMsg);
+    http.end();
+    return false;
+  }
+  
+  WiFiClient* stream = http.getStreamPtr();
+  size_t written = Update.writeStream(*stream);
+  
+  if (written != contentLength) {
+    String errMsg = "Written " + String(written) + " dari " + String(contentLength) + " bytes";
+    sendRemoteLog(actionId, errMsg);
+    Update.abort();
+    http.end();
+    return false;
+  }
+  
+  if (!Update.end()) {
+    String errMsg = "Update.end gagal: " + String(Update.errorString());
+    sendRemoteLog(actionId, errMsg);
+    http.end();
+    return false;
+  }
+  
+  http.end();
+  
+  sendRemoteLog(actionId, "Update berhasil! Restart dalam 3 detik...");
+  Serial.println("[OTA] Update berhasil! Restart...");
+  
+  delay(3000);
+  ESP.restart();
+  
+  return true;
+}
+
+// ===== CHECK ACTIONS =====
+void checkRemoteActions() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  
+  String hwId = defaultDeviceId();
+  String url = String(REMOTE_URL) + "remote.php?action=get_actions";
+  
+  JsonDocument reqDoc;
+  reqDoc["id"] = hwId;
+  reqDoc["v"] = VERSION;
+  
+  String payload;
+  serializeJson(reqDoc, payload);
+  
+  Serial.print("[ACT] Check actions: "); Serial.println(url);
+  
+  WiFiClientSecure client;
+  client.setTimeout(HTTP_TIMEOUT_MS);
+  client.setInsecure();
+  
+  HTTPClient http;
+  if (!http.begin(client, url)) {
+    Serial.println("[ACT] Gagal init HTTP");
+    return;
+  }
+  http.setConnectTimeout(HTTP_TIMEOUT_MS);
+  http.addHeader("Content-Type", "application/json");
+  
+  int code = http.POST(payload);
+  
+  if (code != HTTP_CODE_OK) {
+    Serial.printf("[ACT] HTTP error: %d\n", code);
+    http.end();
+    return;
+  }
+  
+  String response = http.getString();
+  http.end();
+  
+  Serial.print("[ACT] Response: "); Serial.println(response);
+  
+  // Parse response
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, response);
+  
+  if (error) {
+    Serial.print("[ACT] JSON parse error: ");
+    Serial.println(error.c_str());
+    return;
+  }
+  
+  // Check if response is empty or no action
+  if (doc.isNull() || doc.size() == 0) {
+    Serial.println("[ACT] Tidak ada action");
+    return;
+  }
+  
+  if (!doc.containsKey("action")) {
+    Serial.println("[ACT] Tidak ada field action");
+    return;
+  }
+  
+  String actionId = doc["actionid"].as<String>();
+  String action = doc["action"].as<String>();
+  String value = doc["value"].as<String>();
+  
+  Serial.printf("[ACT] Action: %s, Value: %s\n", action.c_str(), value.c_str());
+  
+  // Handle actions
+  if (action == "update") {
+    sendRemoteLog(actionId, "Menerima perintah update");
+    performOTAUpdate(actionId, value);
+  }
+  else if (action == "changename") {
+    CFG.deviceId = value;
+    saveConfig();
+    sendRemoteLog(actionId, "Nama device diubah menjadi: " + value);
+    Serial.println("[ACT] Nama device diubah");
+  }
+  else if (action == "changeendpoint") {
+    CFG.endpoint = value;
+    saveConfig();
+    sendRemoteLog(actionId, "Endpoint diubah menjadi: " + value);
+    Serial.println("[ACT] Endpoint diubah");
+  }
+  else if (action == "changeinterval") {
+    uint32_t newInterval = value.toInt();
+    if (newInterval > 0) {
+      CFG.intervalSec = newInterval;
+      saveConfig();
+      sendRemoteLog(actionId, "Interval diubah menjadi: " + String(newInterval) + " detik");
+      Serial.printf("[ACT] Interval diubah: %u detik\n", newInterval);
+    } else {
+      sendRemoteLog(actionId, "Interval tidak valid: " + value);
+    }
+  }
+  else {
+    sendRemoteLog(actionId, "Action tidak dikenal: " + action);
+    Serial.println("[ACT] Action tidak dikenal");
   }
 }
 
@@ -207,10 +441,16 @@ bool sendHeartbeat() {
 
   long rssi = WiFi.RSSI();
   String hwId = defaultDeviceId();
-  char payload[300];
-  snprintf(payload, sizeof(payload),
-        "{\"id\":\"%s\",\"device_id\":\"%s\",\"ssid\":\"%s\",\"rssi\":%ld}",
-        hwId.c_str(), CFG.deviceId.c_str(), WiFi.SSID().c_str(), rssi);
+  
+  JsonDocument doc;
+  doc["id"] = hwId;
+  doc["device_id"] = CFG.deviceId;
+  doc["ssid"] = WiFi.SSID();
+  doc["rssi"] = rssi;
+  doc["v"] = VERSION;
+  
+  String payload;
+  serializeJson(doc, payload);
 
   Serial.print("POST ke: "); Serial.println(CFG.endpoint);
   Serial.print("Payload: "); Serial.println(payload);
@@ -229,7 +469,7 @@ bool sendHeartbeat() {
   http.addHeader("Content-Type", "application/json");
   if (CFG.token.length()) http.addHeader("Authorization", String("Bearer ") + CFG.token);
 
-  int code = http.POST((uint8_t*)payload, strlen(payload));
+  int code = http.POST(payload);
   Serial.print("HTTP "); Serial.println(code);
 
   bool ok = false;
@@ -269,6 +509,7 @@ void setup() {
   unsigned long t0 = millis();
   while (!Serial && millis()-t0 < 5000) { delay(10); }
   Serial.println("Booting...");
+  Serial.printf("PhiNet Version: %s\n", VERSION);
   ledBlinkBoot();
 
   WiFi.mode(WIFI_STA);
@@ -299,6 +540,7 @@ void setup() {
   }
 
   nextReconnectAtMs = millis() + RECONNECT_BASE_MS;
+  lastActionCheckMs = millis();
   digitalWrite(LED_PIN, HIGH);
 }
 
@@ -322,10 +564,18 @@ void loop() {
   }
 
   unsigned long now = millis();
+  
+  // Kirim heartbeat sesuai interval
   if (wifiConnected && (now - lastSendMs >= CFG.intervalSec * 1000UL)) {
     Serial.println("[HB] Kirim heartbeat...");
     sendHeartbeat();
     lastSendMs = now;
+  }
+  
+  // Check remote actions setiap 30 detik
+  if (wifiConnected && (now - lastActionCheckMs >= 30000UL)) {
+    checkRemoteActions();
+    lastActionCheckMs = now;
   }
 
   delay(10);
