@@ -80,7 +80,12 @@ void onWiFiEvent(WiFiEvent_t event) {
 
 // ===== UTIL =====
 String defaultDeviceId() {
-  return "esp32c3-" + String((uint32_t)ESP.getEfuseMac(), HEX);
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  char macStr[20];
+  sprintf(macStr, "phinet-%02x%02x%02x%02x%02x%02x", 
+          mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  return String(macStr);
 }
 
 void loadConfig() {
@@ -201,10 +206,11 @@ bool sendHeartbeat() {
   }
 
   long rssi = WiFi.RSSI();
-  char payload[200];
+  String hwId = defaultDeviceId();
+  char payload[300];
   snprintf(payload, sizeof(payload),
-        "{\"device_id\":\"%s\",\"ssid\":\"%s\",\"rssi\":%ld}",
-        CFG.deviceId.c_str(), WiFi.SSID().c_str(), rssi);
+        "{\"id\":\"%s\",\"device_id\":\"%s\",\"ssid\":\"%s\",\"rssi\":%ld}",
+        hwId.c_str(), CFG.deviceId.c_str(), WiFi.SSID().c_str(), rssi);
 
   Serial.print("POST ke: "); Serial.println(CFG.endpoint);
   Serial.print("Payload: "); Serial.println(payload);

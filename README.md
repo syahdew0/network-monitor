@@ -123,11 +123,19 @@ Perangkat mengirimkan POST request ke endpoint dengan payload JSON:
 
 ```json
 {
-  "device_id": "esp32c3-abc12345",
+  "id": "phinet-a4cf12345678",
+  "device_id": "Router-Lantai-1",
   "ssid": "Nama-WiFi-Terhubung",
   "rssi": -45
 }
 ```
+
+| Field | Deskripsi |
+|-------|-----------|
+| `id` | Hardware ID permanen (MAC Address), tidak bisa diubah |
+| `device_id` | Nama perangkat (dikonfigurasi via WiFiManager) - backward compatible |
+| `ssid` | Nama WiFi yang terhubung |
+| `rssi` | Kekuatan sinyal dalam dBm |
 
 ### Headers
 
@@ -212,7 +220,7 @@ Booting...
 [WiFi] Dapat IP: 192.168.1.100
 [HB] Kirim heartbeat...
 POST ke: https://api.example.com/heartbeat
-Payload: {"device_id":"esp32c3-abc123","ssid":"MyWiFi","rssi":-42}
+Payload: {"id":"phinet-a4cf12345678","device_id":"Router-Lantai-1","ssid":"MyWiFi","rssi":-42}
 HTTP 200
 Resp: {"status":"ok"}
 Heartbeat OK
