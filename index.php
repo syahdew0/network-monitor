@@ -9,9 +9,9 @@ function getPassword($file)
 {
     if (file_exists($file)) {
         $data = json_decode(file_get_contents($file), true);
-        return $data['password'] ?? 'bypsggroup';
+        return $data['password'] ?? 'secret';
     }
-    return 'bypsggroup'; // default password
+    return 'secret'; // default password
 }
 
 // Function to set password to file
