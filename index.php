@@ -78,6 +78,12 @@ $DB_NAME = 'network_monitor';
 $DB_USER = 'user';
 $DB_PASS = 'kaSjHns7kL76Ah';
 
+// ===== FIRMWARE VERSION CONFIG =====
+
+define('LATEST_FIRMWARE_VERSION', '1.2');
+// define('LATEST_FIRMWARE_VERSION', '1.1');
+define('FIRMWARE_BINARY_URL', 'https://monitorv2.phisoft.co.id/firmware/heartbeatv1.bin');
+
 // ===== DATABASE CONNECTION =====
 function getDB()
 {
@@ -107,6 +113,15 @@ function getDB()
     return $pdo;
 }
 
+// Helper function to check if firmware is outdated
+function isOutdated($currentVersion, $latestVersion)
+{
+    if (empty($currentVersion) || $currentVersion === 'unknown') {
+        return false; // Don't show update for unknown versions
+    }
+    return version_compare($currentVersion, $latestVersion, '<');
+}
+
 // Fetch devices from database
 $devices = [];
 $db = getDB();
@@ -121,7 +136,8 @@ if ($db) {
                 firmware_version,
                 last_ssid,
                 last_rssi,
-                last_ip
+                last_ip,
+                last_interval
             FROM device 
             ORDER BY 
                 CASE WHEN status = 'online' THEN 0 ELSE 1 END,
@@ -826,6 +842,13 @@ foreach ($devices as $device) {
             color: #aaa;
         }
 
+        .edit-field input[readonly] {
+            background-color: #f5f5f5;
+            cursor: not-allowed;
+            color: #666;
+        }
+
+
         .edit-buttons {
             display: flex;
             gap: 10px;
@@ -883,6 +906,66 @@ foreach ($devices as $device) {
 
         .edit-feedback.show {
             display: block;
+        }
+
+        /* Update Section Styles */
+        .update-section {
+            margin-top: 20px;
+            padding: 20px;
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            border-radius: 12px;
+        }
+
+        .update-alert {
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            margin-bottom: 15px;
+        }
+
+        .update-alert svg {
+            width: 24px;
+            height: 24px;
+            color: #ff9800;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .update-alert strong {
+            color: #f57c00;
+            font-size: 1rem;
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .update-alert p {
+            color: #666;
+            font-size: 0.9rem;
+            margin: 0;
+        }
+
+        .update-btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .update-btn:hover {
+            transform: scale(1.02);
+        }
+
+        .update-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
         }
 
         @keyframes fadeIn {
@@ -1055,6 +1138,8 @@ foreach ($devices as $device) {
                         $lastSsid = $device['last_ssid'] ?? '-';
                         $lastRssi = $device['last_rssi'] ?? null;
                         $lastIp = $device['last_ip'] ?? '-';
+                        $lastInterval = $device['last_interval'] ?? '';
+                        $isDeviceOutdated = isOutdated($firmwareVersion, LATEST_FIRMWARE_VERSION);
                         $online = isOnline($status);
                         ?>
                         <div class="device-card clickable" onclick="openDeviceDetail(this)"
@@ -1066,7 +1151,10 @@ foreach ($devices as $device) {
                             data-firmware="<?php echo htmlspecialchars($firmwareVersion); ?>"
                             data-ssid="<?php echo htmlspecialchars($lastSsid); ?>"
                             data-rssi="<?php echo $lastRssi !== null ? intval($lastRssi) : ''; ?>"
-                            data-ip="<?php echo htmlspecialchars($lastIp); ?>">
+                            data-ip="<?php echo htmlspecialchars($lastIp); ?>"
+                            data-interval="<?php echo $lastInterval !== null && $lastInterval !== '' ? intval($lastInterval) : ''; ?>"
+                            data-is-outdated="<?php echo $isDeviceOutdated ? '1' : '0'; ?>"
+                            data-latest-version="<?php echo LATEST_FIRMWARE_VERSION; ?>">
                             <div class="device-header">
                                 <div class="device-name"><?php echo htmlspecialchars($deviceName); ?></div>
                                 <span class="status-dot <?php echo $online ? 'online' : 'offline'; ?>"></span>
@@ -1227,22 +1315,20 @@ foreach ($devices as $device) {
 
                     <div class="edit-form-grid">
                         <div class="edit-field">
-                            <label for="editDeviceName">Nama Device Baru</label>
+                            <label for="editDeviceName">Nama Device</label>
                             <div style="display: flex; gap: 8px;">
-                                <input type="text" id="editDeviceName" placeholder="Contoh: Router-Lantai-1"
-                                    style="flex: 1;">
-                                <button class="edit-btn save-name" onclick="sendChangeNameAction()"
-                                    id="btnSaveName">Kirim</button>
+                                <input type="text" id="editDeviceName" style="flex: 1;" readonly>
+                                <button class="edit-btn save-name" onclick="handleDeviceNameEdit()"
+                                    id="btnSaveName">Ubah</button>
                             </div>
                         </div>
 
                         <div class="edit-field">
                             <label for="editInterval">Interval Heartbeat (detik)</label>
                             <div style="display: flex; gap: 8px;">
-                                <input type="number" id="editInterval" placeholder="Contoh: 60" min="10" max="3600"
-                                    style="flex: 1;">
-                                <button class="edit-btn save-interval" onclick="sendChangeIntervalAction()"
-                                    id="btnSaveInterval">Kirim</button>
+                                <input type="number" id="editInterval" min="10" max="3600" style="flex: 1;" readonly>
+                                <button class="edit-btn save-interval" onclick="handleIntervalEdit()"
+                                    id="btnSaveInterval">Ubah</button>
                             </div>
                         </div>
                     </div>
@@ -1250,6 +1336,24 @@ foreach ($devices as $device) {
                     <div class="edit-feedback" id="editFeedback"></div>
                 </div>
             <?php endif; ?>
+
+            <!-- Firmware Update Section -->
+            <div class="update-section" id="updateSection" style="display: none;">
+                <div class="update-alert">
+                    <svg width="24" height="24" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
+                        </path>
+                    </svg>
+                    <div>
+                        <strong>Firmware Outdated</strong>
+                        <p>Current: <span id="currentVersion">-</span> | Latest: <span id="latestVersion">-</span></p>
+                    </div>
+                </div>
+                <button class="update-btn" onclick="triggerFirmwareUpdate()" id="btnUpdate">
+                    Update to v<span id="updateVersion">-</span>
+                </button>
+            </div>
 
             <button class="close-modal-btn" onclick="closeDeviceDetail()">Tutup</button>
         </div>
@@ -1458,17 +1562,20 @@ foreach ($devices as $device) {
             const modal = document.getElementById('deviceDetailModal');
 
             // Get data from element attributes
-            const deviceId = element.dataset.id || '-';
-            const deviceName = element.dataset.name || deviceId;
+            const hardwareId = element.dataset.id || '-'; // hardware_id for API calls
+            const deviceName = element.dataset.name || hardwareId; // devices_id for display
             const status = element.dataset.status || 'offline';
             const lastSentFormatted = element.dataset.lastsentFormatted || '-';
             const firmware = element.dataset.firmware || '-';
             const ssid = element.dataset.ssid || '-';
             const rssi = element.dataset.rssi || '';
             const ip = element.dataset.ip || '-';
+            const interval = element.dataset.interval || '';
+            const isOutdated = element.dataset.isOutdated === '1';
+            const latestVersion = element.dataset.latestVersion || '';
 
             // Populate modal content
-            document.getElementById('detailDeviceName').textContent = deviceId;
+            document.getElementById('detailDeviceName').textContent = deviceName;
 
             const statusEl = document.getElementById('detailDeviceStatus');
             statusEl.textContent = status === 'online' ? 'Online' : 'Offline';
@@ -1516,21 +1623,53 @@ foreach ($devices as $device) {
             isModalOpen = true;
             stopAutoReload();
 
-            // Set device ID for edit form
+            // Set hardware_id for API calls
             const editDeviceIdField = document.getElementById('editDeviceId');
             if (editDeviceIdField) {
-                editDeviceIdField.value = deviceId;
+                editDeviceIdField.value = hardwareId; // Use hardware_id for API
             }
 
-            // Clear edit form fields
+            // Set current device name (devices_id) and interval, both read-only initially
             const editNameField = document.getElementById('editDeviceName');
             const editIntervalField = document.getElementById('editInterval');
             const editFeedback = document.getElementById('editFeedback');
-            if (editNameField) editNameField.value = '';
-            if (editIntervalField) editIntervalField.value = '';
+            const btnSaveName = document.getElementById('btnSaveName');
+            const btnSaveInterval = document.getElementById('btnSaveInterval');
+
+            if (editNameField) {
+                editNameField.value = deviceName; // Show devices_id (not hardware_id)
+                editNameField.setAttribute('readonly', 'readonly');
+                editNameField.dataset.originalValue = deviceName;
+            }
+            if (btnSaveName) {
+                btnSaveName.textContent = 'Ubah';
+                btnSaveName.onclick = handleDeviceNameEdit;
+            }
+
+            if (editIntervalField) {
+                editIntervalField.value = interval || ''; // Show current interval from DB
+                editIntervalField.setAttribute('readonly', 'readonly');
+                editIntervalField.dataset.originalValue = interval || '';
+            }
+            if (btnSaveInterval) {
+                btnSaveInterval.textContent = 'Ubah';
+                btnSaveInterval.onclick = handleIntervalEdit;
+            }
+
             if (editFeedback) {
                 editFeedback.className = 'edit-feedback';
                 editFeedback.textContent = '';
+            }
+
+            // Check version and show/hide update section
+            const updateSection = document.getElementById('updateSection');
+            if (isOutdated && firmware !== 'unknown' && firmware !== '-') {
+                updateSection.style.display = 'block';
+                document.getElementById('currentVersion').textContent = firmware;
+                document.getElementById('latestVersion').textContent = latestVersion;
+                document.getElementById('updateVersion').textContent = latestVersion;
+            } else {
+                updateSection.style.display = 'none';
             }
         }
 
@@ -1603,10 +1742,65 @@ foreach ($devices as $device) {
             }
         }
 
+        // Handle device name edit toggle
+        function handleDeviceNameEdit() {
+            const input = document.getElementById('editDeviceName');
+            const btn = document.getElementById('btnSaveName');
+
+            // Check if currently in edit mode
+            if (btn.textContent === 'Simpan') {
+                // Save mode - send the action
+                sendChangeNameAction();
+            } else {
+                // Edit mode - enable input
+                input.removeAttribute('readonly');
+                input.focus();
+                input.select();
+                btn.textContent = 'Simpan';
+                btn.onclick = handleDeviceNameEdit; // Same function, different behavior
+            }
+        }
+
+        // Trigger firmware update
+        async function triggerFirmwareUpdate() {
+            const hardwareId = document.getElementById('editDeviceId').value;
+            const latestVersion = document.getElementById('latestVersion').textContent;
+            const btn = document.getElementById('btnUpdate');
+
+            // Confirmation
+            if (!confirm(`Update firmware to v${latestVersion}?\n\nDevice will download and install the update, then restart automatically.`)) {
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Sending update command...';
+
+            // Send update action with firmware URL
+            const result = await sendDeviceAction(
+                hardwareId,
+                'update',
+                '<?php echo FIRMWARE_BINARY_URL; ?>'
+            );
+
+            if (result.success) {
+                showEditFeedback('✅ Action "update" berhasil dikirim! Device akan menerima saat online.', true);
+                btn.textContent = 'Update Sent!';
+                setTimeout(() => {
+                    closeDeviceDetail();
+                }, 2000);
+            } else {
+                alert('❌ Failed to send update: ' + result.message);
+                btn.disabled = false;
+                btn.textContent = 'Update to v' + latestVersion;
+            }
+        }
+
         // Send change name action
         async function sendChangeNameAction() {
             const deviceId = document.getElementById('editDeviceId').value;
-            const newName = document.getElementById('editDeviceName').value.trim();
+            const input = document.getElementById('editDeviceName');
+            const newName = input.value.trim();
+            const originalValue = input.dataset.originalValue;
             const btn = document.getElementById('btnSaveName');
 
             if (!deviceId) {
@@ -1619,6 +1813,15 @@ foreach ($devices as $device) {
                 return;
             }
 
+            // Check if name actually changed
+            if (newName === originalValue) {
+                showEditFeedback('ℹ️ Nama tidak berubah', false);
+                // Return to read-only mode
+                input.setAttribute('readonly', 'readonly');
+                btn.textContent = 'Ubah';
+                return;
+            }
+
             // Disable button
             btn.disabled = true;
             btn.textContent = 'Mengirim...';
@@ -1627,20 +1830,44 @@ foreach ($devices as $device) {
 
             if (result.success) {
                 showEditFeedback('✅ Action "changename" berhasil dikirim! Device akan menerima saat online.', true);
-                document.getElementById('editDeviceName').value = '';
+                // Update original value and return to read-only
+                input.dataset.originalValue = newName;
+                input.setAttribute('readonly', 'readonly');
+                btn.textContent = 'Ubah';
             } else {
                 showEditFeedback('❌ Gagal: ' + result.message, false);
+                btn.textContent = 'Simpan'; // Keep in edit mode on error
             }
 
             // Re-enable button
             btn.disabled = false;
-            btn.textContent = 'Kirim';
+        }
+
+        // Handle interval edit toggle
+        function handleIntervalEdit() {
+            const input = document.getElementById('editInterval');
+            const btn = document.getElementById('btnSaveInterval');
+
+            // Check if currently in edit mode
+            if (btn.textContent === 'Simpan') {
+                // Save mode - send the action
+                sendChangeIntervalAction();
+            } else {
+                // Edit mode - enable input
+                input.removeAttribute('readonly');
+                input.focus();
+                input.select();
+                btn.textContent = 'Simpan';
+                btn.onclick = handleIntervalEdit; // Same function, different behavior
+            }
         }
 
         // Send change interval action
         async function sendChangeIntervalAction() {
             const deviceId = document.getElementById('editDeviceId').value;
-            const newInterval = document.getElementById('editInterval').value.trim();
+            const input = document.getElementById('editInterval');
+            const newInterval = input.value.trim();
+            const originalValue = input.dataset.originalValue;
             const btn = document.getElementById('btnSaveInterval');
 
             if (!deviceId) {
@@ -1659,6 +1886,15 @@ foreach ($devices as $device) {
                 return;
             }
 
+            // Check if interval actually changed
+            if (newInterval === originalValue) {
+                showEditFeedback('ℹ️ Interval tidak berubah', false);
+                // Return to read-only mode
+                input.setAttribute('readonly', 'readonly');
+                btn.textContent = 'Ubah';
+                return;
+            }
+
             // Disable button
             btn.disabled = true;
             btn.textContent = 'Mengirim...';
@@ -1667,14 +1903,17 @@ foreach ($devices as $device) {
 
             if (result.success) {
                 showEditFeedback('✅ Action "changeinterval" berhasil dikirim! Device akan menerima saat online.', true);
-                document.getElementById('editInterval').value = '';
+                // Update original value and return to read-only
+                input.dataset.originalValue = newInterval;
+                input.setAttribute('readonly', 'readonly');
+                btn.textContent = 'Ubah';
             } else {
                 showEditFeedback('❌ Gagal: ' + result.message, false);
+                btn.textContent = 'Simpan'; // Keep in edit mode on error
             }
 
             // Re-enable button
             btn.disabled = false;
-            btn.textContent = 'Kirim';
         }
     </script>
 </body>

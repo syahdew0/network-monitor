@@ -209,6 +209,61 @@ function handleLog()
 }
 
 /**
+ * Complete action (mark action as completed/failed)
+ * POST body: {"hardware_id": "phinet-xxxx", "actionid": 123, "status": "completed", "msg": "...", "v": "1.0"}
+ */
+function handleCompleteAction()
+{
+    $input = getJsonInput();
+
+    if (empty($input['hardware_id']) || empty($input['actionid'])) {
+        jsonResponse(['error' => 'Missing required fields'], 400);
+    }
+
+    $hardwareId = $input['hardware_id'];
+    $actionId = (int) $input['actionid'];
+    $status = $input['status'] ?? 'completed';
+    $msg = $input['msg'] ?? null;
+    $version = $input['v'] ?? 'unknown';
+
+    if (!validateDeviceId($hardwareId)) {
+        jsonResponse(['error' => 'Invalid hardware_id format'], 400);
+    }
+
+    $db = getDB();
+
+    // (opsional) insert log kalau msg ada
+    if (!empty($msg)) {
+        $stmt = $db->prepare("
+            INSERT INTO action_logs (actionid, hardware_id, message, version, logged_at)
+            VALUES (:actionid, :hardware_id, :message, :version, NOW())
+        ");
+        $stmt->execute([
+            'actionid' => $actionId,
+            'hardware_id' => $hardwareId,
+            'message' => $msg,
+            'version' => $version
+        ]);
+    }
+
+    // update status action (PAKAI hardware_id + actionid biar aman)
+    $stmt = $db->prepare("
+        UPDATE device_actions
+        SET status = :status,
+            completed_at = IF(:status IN ('completed','failed'), NOW(), completed_at)
+        WHERE actionid = :actionid
+          AND hardware_id = :hardware_id
+    ");
+    $stmt->execute([
+        'status' => $status,
+        'actionid' => $actionId,
+        'hardware_id' => $hardwareId
+    ]);
+
+    jsonResponse(['success' => true, 'status' => $status]);
+}
+
+/**
  * Receive heartbeat (alternative endpoint via REMOTE_URL)
  * POST body: {"id": "phinet-xxxx", "device_id": "name", "ssid": "...", "rssi": -42, "ip": "192.168.x.x", "v": "1.0"}
  */
@@ -422,6 +477,10 @@ switch ($action) {
         handleLog();
         break;
 
+    case 'complete_action':
+        handleCompleteAction();
+        break;
+
     case 'heartbeat':
         handleHeartbeat();
         break;
@@ -445,6 +504,7 @@ switch ($action) {
             'endpoints' => [
                 'POST ?action=get_actions' => 'Get pending actions for device',
                 'POST ?action=log' => 'Log action result from device',
+                'POST ?action=complete_action' => 'Complete action and update status',
                 'POST ?action=heartbeat' => 'Receive heartbeat from device',
                 'POST ?action=create_action' => 'Create new action for device (admin)',
                 'GET  ?action=list_devices' => 'List all devices (admin)',
