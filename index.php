@@ -75,8 +75,8 @@ if (isset($_GET['logout'])) {
 // ===== DATABASE CONFIG =====
 $DB_HOST = 'localhost';
 $DB_NAME = 'network_monitor';
-$DB_USER = 'user';
-$DB_PASS = 'kaSjHns7kL76Ah';
+$DB_USER = 'root';
+$DB_PASS = '';
 
 // ===== FIRMWARE VERSION CONFIG =====
 
@@ -576,8 +576,10 @@ foreach ($devices as $device) {
             bottom: 0;
             background: rgba(0, 0, 0, 0.8);
             z-index: 9999;
-            align-items: center;
+            align-items: flex-start;
             justify-content: center;
+            overflow-y: auto;
+            padding: 20px 0;
         }
 
         .modal.active {
@@ -591,6 +593,9 @@ foreach ($devices as $device) {
             max-width: 400px;
             width: 90%;
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            margin: auto 0;
         }
 
         .modal-content h3 {
@@ -669,6 +674,8 @@ foreach ($devices as $device) {
 
         .device-detail-modal .modal-content {
             max-width: 450px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
         }
 
         .device-detail-header {
@@ -967,6 +974,137 @@ foreach ($devices as $device) {
             cursor: not-allowed;
             transform: none;
         }
+
+        /* Action History Styles */
+        .action-history-section {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .action-history-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .action-history-list {
+            max-height: 300px;
+            overflow-y: auto;
+            background: #f9fafb;
+            border-radius: 8px;
+            padding: 10px;
+        }
+
+        .action-history-empty {
+            text-align: center;
+            padding: 20px;
+            color: #999;
+            font-size: 0.9rem;
+        }
+
+        .action-item {
+            background: white;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 8px;
+            border-left: 3px solid #667eea;
+            transition: transform 0.2s;
+        }
+
+        .action-item:hover {
+            transform: translateX(3px);
+        }
+
+        .action-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .action-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        .action-item-type {
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: #333;
+            text-transform: capitalize;
+        }
+
+        .action-item-status {
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .action-item-status.pending {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .action-item-status.sent {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .action-item-status.completed {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .action-item-status.failed {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .action-item-value {
+            font-size: 0.85rem;
+            color: #666;
+            margin-bottom: 4px;
+        }
+
+        .action-item-date {
+            font-size: 0.75rem;
+            color: #999;
+        }
+
+        .action-history-loading {
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+        }
+
+        .refresh-actions-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: transform 0.2s;
+        }
+
+        .refresh-actions-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .refresh-actions-btn svg {
+            width: 14px;
+            height: 14px;
+        }
+
 
         @keyframes fadeIn {
             from {
@@ -1355,6 +1493,29 @@ foreach ($devices as $device) {
                 </button>
             </div>
 
+            <!-- Action History Section -->
+            <div class="action-history-section">
+                <div class="action-history-title">
+                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01">
+                        </path>
+                    </svg>
+                    Riwayat Action
+                    <button class="refresh-actions-btn" onclick="loadDeviceActions()" title="Refresh">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+                            </path>
+                        </svg>
+                        Refresh
+                    </button>
+                </div>
+                <div class="action-history-list" id="actionHistoryList">
+                    <div class="action-history-loading">Loading actions...</div>
+                </div>
+            </div>
+
             <button class="close-modal-btn" onclick="closeDeviceDetail()">Tutup</button>
         </div>
     </div>
@@ -1671,6 +1832,9 @@ foreach ($devices as $device) {
             } else {
                 updateSection.style.display = 'none';
             }
+
+            // Load action history
+            loadDeviceActions();
         }
 
         function closeDeviceDetail() {
@@ -1679,6 +1843,83 @@ foreach ($devices as $device) {
             isModalOpen = false;
             startAutoReload();
         }
+
+        // Load device actions history
+        async function loadDeviceActions() {
+            const hardwareId = document.getElementById('editDeviceId').value;
+            if (!hardwareId) {
+                console.error('No hardware_id set');
+                return;
+            }
+
+            const listContainer = document.getElementById('actionHistoryList');
+            listContainer.innerHTML = '<div class="action-history-loading">Loading...</div>';
+
+            try {
+                const response = await fetch(`remote.php?action=get_device_actions&hardware_id=${encodeURIComponent(hardwareId)}`);
+                const data = await response.json();
+
+                if (data.success && data.actions) {
+                    if (data.actions.length === 0) {
+                        listContainer.innerHTML = '<div class="action-history-empty">Belum ada action untuk device ini</div>';
+                    } else {
+                        listContainer.innerHTML = data.actions.map(action => createActionItem(action)).join('');
+                    }
+                } else {
+                    listContainer.innerHTML = '<div class="action-history-empty">Error: ' + (data.error || 'Failed to load actions') + '</div>';
+                }
+            } catch (error) {
+                console.error('Error loading actions:', error);
+                listContainer.innerHTML = '<div class="action-history-empty">Error loading actions</div>';
+            }
+        }
+
+        // Create action item HTML
+        function createActionItem(action) {
+            const actionLabels = {
+                'changename': 'Ubah Nama',
+                'changeendpoint': 'Ubah Endpoint',
+                'changeinterval': 'Ubah Interval',
+                'update': 'Update Firmware'
+            };
+
+            const label = actionLabels[action.action] || action.action;
+            const statusClass = action.status.toLowerCase();
+            const statusText = action.status.charAt(0).toUpperCase() + action.status.slice(1);
+
+            // Format dates
+            const createdDate = formatDate(action.created_at);
+            const sentDate = action.sent_at ? formatDate(action.sent_at) : null;
+            const completedDate = action.completed_at ? formatDate(action.completed_at) : null;
+
+            let dateInfo = `Dibuat: ${createdDate}`;
+            if (sentDate) dateInfo += ` | Dikirim: ${sentDate}`;
+            if (completedDate) dateInfo += ` | Selesai: ${completedDate}`;
+
+            return `
+                <div class="action-item">
+                    <div class="action-item-header">
+                        <div class="action-item-type">${label}</div>
+                        <div class="action-item-status ${statusClass}">${statusText}</div>
+                    </div>
+                    <div class="action-item-value">Value: ${action.value || '-'}</div>
+                    <div class="action-item-date">${dateInfo}</div>
+                </div>
+            `;
+        }
+
+        // Format date helper
+        function formatDate(dateString) {
+            if (!dateString) return '-';
+            const date = new Date(dateString);
+            const day = String(date.getDate()).padStart(2, '0');
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const year = date.getFullYear();
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            return `${day}/${month}/${year} ${hours}:${minutes}`;
+        }
+
 
         // Close device detail modal when clicking outside
         document.getElementById('deviceDetailModal').addEventListener('click', function (e) {

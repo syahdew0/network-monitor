@@ -27,8 +27,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 // ===== DATABASE CONFIG =====
 $DB_HOST = 'localhost';
 $DB_NAME = 'network_monitor';
-$DB_USER = 'user';
-$DB_PASS = 'kaSjHns7kL76Ah';
+$DB_USER = 'root';
+$DB_PASS = '';
 
 // ===== DATABASE CONNECTION =====
 function getDB()
@@ -162,8 +162,22 @@ function handleLog()
 {
     $input = getJsonInput();
 
+    // Log untuk debugging
+    $debugLog = date('Y-m-d H:i:s') . " - handleLog called\n";
+    $debugLog .= "Input: " . json_encode($input) . "\n";
+    file_put_contents(__DIR__ . '/remote_debug.log', $debugLog, FILE_APPEND);
+
     if (empty($input['id']) || empty($input['actionid']) || empty($input['msg'])) {
-        jsonResponse(['error' => 'Missing required fields'], 400);
+        $error = [
+            'error' => 'Missing required fields',
+            'received' => [
+                'id' => $input['id'] ?? 'missing',
+                'actionid' => $input['actionid'] ?? 'missing',
+                'msg' => $input['msg'] ?? 'missing'
+            ]
+        ];
+        file_put_contents(__DIR__ . '/remote_debug.log', "ERROR: " . json_encode($error) . "\n", FILE_APPEND);
+        jsonResponse($error, 400);
     }
 
     $deviceId = $input['id'];
@@ -172,41 +186,67 @@ function handleLog()
     $version = $input['v'] ?? 'unknown';
 
     if (!validateDeviceId($deviceId)) {
-        jsonResponse(['error' => 'Invalid device id format'], 400);
+        $error = ['error' => 'Invalid device id format', 'id' => $deviceId];
+        file_put_contents(__DIR__ . '/remote_debug.log', "ERROR: " . json_encode($error) . "\n", FILE_APPEND);
+        jsonResponse($error, 400);
     }
 
     $db = getDB();
 
-    // Insert log
-    $stmt = $db->prepare("
-        INSERT INTO action_logs (actionid, hardware_id, message, version, logged_at)
-        VALUES (:actionid, :hardware_id, :message, :version, NOW())
-    ");
-    $stmt->execute([
-        'actionid' => $actionId,
-        'hardware_id' => $deviceId,
-        'message' => $message,
-        'version' => $version
-    ]);
+    try {
+        // Insert log
+        $stmt = $db->prepare("
+            INSERT INTO action_logs (actionid, hardware_id, message, version, logged_at)
+            VALUES (:actionid, :hardware_id, :message, :version, NOW())
+        ");
+        $result = $stmt->execute([
+            'actionid' => $actionId,
+            'hardware_id' => $deviceId,
+            'message' => $message,
+            'version' => $version
+        ]);
 
-    // Update action status based on message
-    $status = 'completed';
-    if (stripos($message, 'gagal') !== false || stripos($message, 'error') !== false) {
-        $status = 'failed';
+        $logId = $db->lastInsertId();
+        $debugLog = "Log inserted successfully. ID: $logId\n";
+        file_put_contents(__DIR__ . '/remote_debug.log', $debugLog, FILE_APPEND);
+
+        // Update action status based on message
+        $status = 'completed';
+        if (stripos($message, 'gagal') !== false || stripos($message, 'error') !== false) {
+            $status = 'failed';
+        }
+
+        $updateStmt = $db->prepare("
+            UPDATE device_actions 
+            SET status = :status, completed_at = NOW() 
+            WHERE actionid = :actionid
+        ");
+        $updateResult = $updateStmt->execute([
+            'status' => $status,
+            'actionid' => $actionId
+        ]);
+
+        $rowsAffected = $updateStmt->rowCount();
+        $debugLog = "Action updated. Status: $status, Rows affected: $rowsAffected\n";
+        file_put_contents(__DIR__ . '/remote_debug.log', $debugLog, FILE_APPEND);
+
+        jsonResponse([
+            'success' => true,
+            'status' => $status,
+            'log_id' => $logId,
+            'rows_updated' => $rowsAffected
+        ]);
+    } catch (PDOException $e) {
+        $error = [
+            'error' => 'Database error',
+            'message' => $e->getMessage(),
+            'code' => $e->getCode()
+        ];
+        file_put_contents(__DIR__ . '/remote_debug.log', "DB ERROR: " . json_encode($error) . "\n", FILE_APPEND);
+        jsonResponse($error, 500);
     }
-
-    $updateStmt = $db->prepare("
-        UPDATE device_actions 
-        SET status = :status, completed_at = NOW() 
-        WHERE actionid = :actionid
-    ");
-    $updateStmt->execute([
-        'status' => $status,
-        'actionid' => $actionId
-    ]);
-
-    jsonResponse(['success' => true, 'status' => $status]);
 }
+
 
 /**
  * Complete action (mark action as completed/failed)
