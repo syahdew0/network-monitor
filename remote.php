@@ -27,8 +27,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 // ===== DATABASE CONFIG =====
 $DB_HOST = 'localhost';
 $DB_NAME = 'network_monitor';
-$DB_USER = 'root';
-$DB_PASS = '';
+$DB_USER = 'user';
+$DB_PASS = 'kaSjHns7kL76Ah';
 
 // ===== DATABASE CONNECTION =====
 function getDB()
@@ -256,8 +256,24 @@ function handleCompleteAction()
 {
     $input = getJsonInput();
 
+    // Helper function untuk safe logging (tidak throw error jika gagal)
+    $safeLog = function ($message) {
+        try {
+            @file_put_contents(__DIR__ . '/complete_action_debug.log', $message, FILE_APPEND);
+        } catch (Exception $e) {
+            // Silently ignore logging errors
+        }
+    };
+
+    // Debug logging - Log incoming request
+    $debugLog = date('Y-m-d H:i:s') . " - handleCompleteAction called\n";
+    $debugLog .= "Input: " . json_encode($input) . "\n";
+    $safeLog($debugLog);
+
     if (empty($input['hardware_id']) || empty($input['actionid'])) {
-        jsonResponse(['error' => 'Missing required fields'], 400);
+        $error = ['error' => 'Missing required fields', 'received' => $input];
+        $safeLog("ERROR: " . json_encode($error) . "\n");
+        jsonResponse($error, 400);
     }
 
     $hardwareId = $input['hardware_id'];
@@ -267,40 +283,66 @@ function handleCompleteAction()
     $version = $input['v'] ?? 'unknown';
 
     if (!validateDeviceId($hardwareId)) {
-        jsonResponse(['error' => 'Invalid hardware_id format'], 400);
+        $error = ['error' => 'Invalid hardware_id format', 'hardware_id' => $hardwareId];
+        $safeLog("ERROR: " . json_encode($error) . "\n");
+        jsonResponse($error, 400);
     }
 
     $db = getDB();
-
-    // (opsional) insert log kalau msg ada
-    if (!empty($msg)) {
-        $stmt = $db->prepare("
-            INSERT INTO action_logs (actionid, hardware_id, message, version, logged_at)
-            VALUES (:actionid, :hardware_id, :message, :version, NOW())
-        ");
-        $stmt->execute([
-            'actionid' => $actionId,
-            'hardware_id' => $hardwareId,
-            'message' => $msg,
-            'version' => $version
-        ]);
+    if ($db === null) {
+        $error = ['error' => 'Database connection failed'];
+        $safeLog("ERROR: DB connection failed\n");
+        jsonResponse($error, 500);
     }
 
-    // update status action (PAKAI hardware_id + actionid biar aman)
-    $stmt = $db->prepare("
-        UPDATE device_actions
-        SET status = :status,
-            completed_at = IF(:status IN ('completed','failed'), NOW(), completed_at)
-        WHERE actionid = :actionid
-          AND hardware_id = :hardware_id
-    ");
-    $stmt->execute([
-        'status' => $status,
-        'actionid' => $actionId,
-        'hardware_id' => $hardwareId
-    ]);
+    try {
+        // (opsional) insert log kalau msg ada
+        if (!empty($msg)) {
+            $stmt = $db->prepare("
+                INSERT INTO action_logs (actionid, hardware_id, message, version, logged_at)
+                VALUES (:actionid, :hardware_id, :message, :version, NOW())
+            ");
+            $stmt->execute([
+                'actionid' => $actionId,
+                'hardware_id' => $hardwareId,
+                'message' => $msg,
+                'version' => $version
+            ]);
+            $logId = $db->lastInsertId();
+            $safeLog("Log inserted: ID=$logId\n");
+        }
 
-    jsonResponse(['success' => true, 'status' => $status]);
+        // update status action (PAKAI hardware_id + actionid biar aman)
+        $stmt = $db->prepare("
+            UPDATE device_actions
+            SET status = :status,
+                completed_at = IF(:status IN ('completed','failed'), NOW(), completed_at)
+            WHERE actionid = :actionid
+              AND hardware_id = :hardware_id
+        ");
+        $stmt->execute([
+            'status' => $status,
+            'actionid' => $actionId,
+            'hardware_id' => $hardwareId
+        ]);
+
+        $rowsAffected = $stmt->rowCount();
+        $debugLog = "UPDATE executed - Status: $status, ActionID: $actionId, HardwareID: $hardwareId, Rows affected: $rowsAffected\n";
+        $safeLog($debugLog);
+
+        if ($rowsAffected === 0) {
+            $warningLog = "WARNING: No rows updated! Check if actionid=$actionId with hardware_id=$hardwareId exists in database\n";
+            $safeLog($warningLog);
+        }
+
+        $safeLog("Response: SUCCESS\n---\n");
+        jsonResponse(['success' => true, 'status' => $status, 'rows_affected' => $rowsAffected]);
+
+    } catch (PDOException $e) {
+        $error = ['error' => 'Database error', 'message' => $e->getMessage()];
+        $safeLog("DB ERROR: " . json_encode($error) . "\n");
+        jsonResponse($error, 500);
+    }
 }
 
 /**

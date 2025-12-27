@@ -75,14 +75,20 @@ if (isset($_GET['logout'])) {
 // ===== DATABASE CONFIG =====
 $DB_HOST = 'localhost';
 $DB_NAME = 'network_monitor';
-$DB_USER = 'root';
-$DB_PASS = '';
+$DB_USER = 'user';
+$DB_PASS = 'kaSjHns7kL76Ah';
 
 // ===== FIRMWARE VERSION CONFIG =====
+// Load latest version from version.txt on the server
+$versionFile = __DIR__ . '/firmware/version.txt';
+$latestVersion = '1.1'; // Fallback default
 
-define('LATEST_FIRMWARE_VERSION', '1.2');
-// define('LATEST_FIRMWARE_VERSION', '1.1');
-define('FIRMWARE_BINARY_URL', 'https://monitorv2.phisoft.co.id/firmware/heartbeatv1.bin');
+if (file_exists($versionFile)) {
+    $latestVersion = trim(file_get_contents($versionFile));
+}
+
+define('LATEST_FIRMWARE_VERSION', $latestVersion);
+define('FIRMWARE_BINARY_URL', 'https://monitorv2.phisoft.co.id/firmware/firmware.ino.bin');
 
 // ===== DATABASE CONNECTION =====
 function getDB()
@@ -1105,7 +1111,6 @@ foreach ($devices as $device) {
             height: 14px;
         }
 
-
         @keyframes fadeIn {
             from {
                 opacity: 0;
@@ -1356,6 +1361,22 @@ foreach ($devices as $device) {
             </div>
 
             <div class="device-detail-grid">
+                <!-- Hardware ID -->
+                <div class="detail-item">
+                    <div class="detail-item-icon">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z">
+                            </path>
+                        </svg>
+                    </div>
+                    <div class="detail-item-content">
+                        <div class="detail-item-label">Hardware ID</div>
+                        <div class="detail-item-value" id="detailHardwareId">-</div>
+                    </div>
+                </div>
+
+                <!-- WiFi SSID -->
                 <div class="detail-item">
                     <div class="detail-item-icon">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1737,6 +1758,7 @@ foreach ($devices as $device) {
 
             // Populate modal content
             document.getElementById('detailDeviceName').textContent = deviceName;
+            document.getElementById('detailHardwareId').textContent = hardwareId;
 
             const statusEl = document.getElementById('detailDeviceStatus');
             statusEl.textContent = status === 'online' ? 'Online' : 'Offline';
@@ -2156,6 +2178,7 @@ foreach ($devices as $device) {
             // Re-enable button
             btn.disabled = false;
         }
+
     </script>
 </body>
 
