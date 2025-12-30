@@ -32,13 +32,8 @@ unsigned long nextReconnectAtMs = 0;
 unsigned long currentBackoffMs = RECONNECT_BASE_MS;
 
 struct AppConfig {
-  String endpoint;
-  String token;
   String deviceId;
   uint32_t intervalSec;
-
-  String wifiSsid; // NEW
-  String wifiPass; // NEW
 } CFG;
 
 Preferences prefs;
@@ -113,14 +108,10 @@ String defaultDeviceId() {
 
 void loadConfig() {
   prefs.begin("cfg", true);
-  CFG.endpoint = prefs.getString("endpoint", "");
-  CFG.token = prefs.getString("token", "");
   CFG.deviceId = prefs.getString("deviceId", "");
   CFG.intervalSec = prefs.getUInt("interval", 60);
-
-  CFG.wifiSsid = prefs.getString("wssid", ""); // NEW
-  CFG.wifiPass = prefs.getString("wpass", ""); // NEW
   prefs.end();
+
   if (CFG.deviceId.length() == 0)
     CFG.deviceId = defaultDeviceId();
   if (CFG.intervalSec == 0)
@@ -129,13 +120,8 @@ void loadConfig() {
 
 void saveConfig() {
   prefs.begin("cfg", false);
-  prefs.putString("endpoint", CFG.endpoint);
-  prefs.putString("token", CFG.token);
   prefs.putString("deviceId", CFG.deviceId);
   prefs.putUInt("interval", CFG.intervalSec);
-
-  prefs.putString("wssid", CFG.wifiSsid); // NEW
-  prefs.putString("wpass", CFG.wifiPass); // NEW
   prefs.end();
 }
 
@@ -287,11 +273,6 @@ void handleAction(const String &actionId, const String &action,
     CFG.deviceId = value;
     saveConfig();
     sendRemoteLog(actionId, "Nama device diubah menjadi: " + value);
-
-  } else if (action == "changeendpoint") {
-    CFG.endpoint = value;
-    saveConfig();
-    sendRemoteLog(actionId, "Endpoint diubah menjadi: " + value);
 
   } else if (action == "changeinterval") {
     uint32_t newInterval = value.toInt();
@@ -470,14 +451,6 @@ void checkRemoteActions() {
     sendRemoteLog(actionId, msg);
     sendCompleteAction(actionId, "completed", msg);
 
-  } else if (action == "changeendpoint") {
-    CFG.endpoint = value;
-    saveConfig();
-
-    String msg = "Endpoint diubah menjadi: " + value;
-    sendRemoteLog(actionId, msg);
-    sendCompleteAction(actionId, "completed", msg);
-
   } else if (action == "changeinterval") {
     uint32_t newInterval = value.toInt();
     if (newInterval > 0) {
@@ -540,45 +513,44 @@ bool runConfigPortalForced() {
   wm.setConfigPortalTimeout(300);
   wm.setCleanConnect(false);
 
-  char endpointBuf[200] = {0}, tokenBuf[128] = {0}, devidBuf[64] = {0},
-       intvalBuf[12] = {0};
-  char ssidBuf[64] = {0}, passBuf[64] = {0}; // NEW
-  if (CFG.endpoint.length())
-    strncpy(endpointBuf, CFG.endpoint.c_str(), sizeof(endpointBuf) - 1);
-  if (CFG.token.length())
-    strncpy(tokenBuf, CFG.token.c_str(), sizeof(tokenBuf) - 1);
+  char devidBuf[64] = {0}, intvalBuf[12] = {0};
+  char hwIdBuf[64] = {0};
+
+  // Get hardware ID (MAC-based, read-only)
+  String hwId = defaultDeviceId();
+  strncpy(hwIdBuf, hwId.c_str(), sizeof(hwIdBuf) - 1);
+
+  // Get current device ID
   String did = CFG.deviceId.length() ? CFG.deviceId : defaultDeviceId();
   strncpy(devidBuf, did.c_str(), sizeof(devidBuf) - 1);
-  snprintf(intvalBuf, sizeof(intvalBuf), "%u", (unsigned)CFG.intervalSec);
-  if (CFG.wifiSsid.length())
-    strncpy(ssidBuf, CFG.wifiSsid.c_str(), sizeof(ssidBuf) - 1);
-  if (CFG.wifiPass.length())
-    strncpy(passBuf, CFG.wifiPass.c_str(), sizeof(passBuf) - 1);
 
-  WiFiManagerParameter pEndpoint("endpoint", "Heartbeat URL (http/https)",
-                                 endpointBuf, 180);
-  WiFiManagerParameter pToken("token", "Bearer Token (opsional)", tokenBuf,
-                              120);
+  snprintf(intvalBuf, sizeof(intvalBuf), "%u", (unsigned)CFG.intervalSec);
+
+  // Hardware ID as read-only field (shown after WiFiManager's built-in
+  // SSID/Password fields)
+  char customHtmlHwId[300];
+  snprintf(
+      customHtmlHwId, sizeof(customHtmlHwId),
+      "<label for='hwid'>Hardware ID</label><input type='text' id='hwid' "
+      "name='hwid' value='%s' readonly style='background-color: #e0e0e0;'>",
+      hwIdBuf);
+  WiFiManagerParameter pHwId(customHtmlHwId);
+
   WiFiManagerParameter pDevId("deviceId", "Device ID", devidBuf, 60);
-  WiFiManagerParameter pInterval("interval", "Interval detik (mis. 60)",
-                                 intvalBuf, 10);
-  WiFiManagerParameter pWifiSsid("wssid", "WiFi SSID", ssidBuf, 63);
-  WiFiManagerParameter pWifiPass("wpass", "WiFi Password", passBuf, 63);
-  wm.addParameter(&pWifiSsid);
-  wm.addParameter(&pWifiPass);
-  wm.addParameter(&pEndpoint);
-  wm.addParameter(&pToken);
+  WiFiManagerParameter pInterval("interval", "Interval", intvalBuf, 10);
+
+  // Add custom parameters (WiFiManager's SSID/Password fields will appear first
+  // automatically)
+  wm.addParameter(&pHwId);
   wm.addParameter(&pDevId);
   wm.addParameter(&pInterval);
 
   bool ok = wm.startConfigPortal(AP_NAME, AP_PASSWORD);
 
-  CFG.endpoint = String(pEndpoint.getValue());
-  CFG.token = String(pToken.getValue());
+  // Save only custom config values (WiFiManager handles WiFi credentials
+  // automatically)
   CFG.deviceId = String(pDevId.getValue());
   CFG.intervalSec = String(pInterval.getValue()).toInt();
-  CFG.wifiSsid = String(pWifiSsid.getValue());
-  CFG.wifiPass = String(pWifiPass.getValue());
 
   if (CFG.deviceId.length() == 0)
     CFG.deviceId = did;
@@ -587,13 +559,13 @@ bool runConfigPortalForced() {
   saveConfig();
 
   Serial.println("[CFG] Konfigurasi disimpan:");
-  Serial.print(" endpoint: ");
-  Serial.println(CFG.endpoint);
-  Serial.print(" token   : ");
-  Serial.println(CFG.token.length() ? "<set>" : "<kosong>");
-  Serial.print(" deviceId: ");
+  Serial.print(" WiFi SSID: ");
+  Serial.println(WiFi.SSID());
+  Serial.print(" Hardware ID: ");
+  Serial.println(hwId);
+  Serial.print(" Device ID: ");
   Serial.println(CFG.deviceId);
-  Serial.printf(" interval: %u detik\n", (unsigned)CFG.intervalSec);
+  Serial.printf(" Interval: %u detik\n", (unsigned)CFG.intervalSec);
 
   ledBlinkSave();
 
@@ -605,11 +577,8 @@ bool runConfigPortalForced() {
   delay(200);
   if (ok) {
     Serial.println("[CFG] Reconnect Wi-Fi...");
-    if (CFG.wifiSsid.length()) {
-      WiFi.begin(CFG.wifiSsid.c_str(), CFG.wifiPass.c_str());
-    } else {
-      WiFi.begin();
-    }
+    // WiFiManager already saved credentials, just reconnect
+    WiFi.begin();
   }
 
   digitalWrite(LED_PIN, HIGH); // LED solid = mode normal
@@ -618,11 +587,6 @@ bool runConfigPortalForced() {
 
 // ===== HEARTBEAT =====
 bool sendHeartbeat() {
-  if (CFG.endpoint.length() == 0) {
-    Serial.println("[HB] Endpoint kosong, abaikan.");
-    return false;
-  }
-
   // Jangan kirim kalau belum dapat IP
   if (WiFi.status() != WL_CONNECTED || WiFi.localIP().toString() == "0.0.0.0") {
     Serial.println("[HB] Wi-Fi belum siap, tunda.");
@@ -632,6 +596,7 @@ bool sendHeartbeat() {
   long rssi = WiFi.RSSI();
   String hwId = defaultDeviceId();
   String localIp = WiFi.localIP().toString();
+  String url = String(REMOTE_URL) + "remote.php?action=heartbeat";
 
   JsonDocument doc;
   doc["id"] = hwId;
@@ -645,9 +610,9 @@ bool sendHeartbeat() {
   String payload;
   serializeJson(doc, payload);
 
-  Serial.print("POST ke: ");
-  Serial.println(CFG.endpoint);
-  Serial.print("Payload: ");
+  Serial.print("[HB] POST ke: ");
+  Serial.println(url);
+  Serial.print("[HB] Payload: ");
   Serial.println(payload);
   Serial.print("Interval: ");
   Serial.println(CFG.intervalSec);
@@ -657,31 +622,29 @@ bool sendHeartbeat() {
   client.setInsecure();
 
   HTTPClient http;
-  if (!http.begin(client, CFG.endpoint)) {
-    Serial.println("[HTTP] Gagal init HTTP");
+  if (!http.begin(client, url)) {
+    Serial.println("[HB] Gagal init HTTP");
     return false;
   }
   http.setConnectTimeout(HTTP_TIMEOUT_MS);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   http.addHeader("Content-Type", "application/json");
-  if (CFG.token.length())
-    http.addHeader("Authorization", String("Bearer ") + CFG.token);
 
   int code = http.POST(payload);
-  Serial.print("HTTP ");
+  Serial.print("[HB] HTTP ");
   Serial.println(code);
 
   bool ok = false;
   if (code > 0) {
     String resp = http.getString();
-    Serial.print("Resp: ");
+    Serial.print("[HB] Resp: ");
     Serial.println(resp);
     if (code >= 200 && code < 300) {
-      Serial.println("Heartbeat OK");
+      Serial.println("[HB] Heartbeat OK");
       ok = true;
     }
   } else {
-    Serial.print("Resp: ");
+    Serial.print("[HB] Error: ");
     Serial.println(http.errorToString(code));
   }
   http.end();
@@ -696,12 +659,8 @@ void tryReconnectIfNeeded() {
     Serial.printf("[WiFi] Reconnect... (backoff=%lums)\n", currentBackoffMs);
     WiFi.disconnect(false, false);
     delay(50);
-    // Use stored credentials from config
-    if (CFG.wifiSsid.length()) {
-      WiFi.begin(CFG.wifiSsid.c_str(), CFG.wifiPass.c_str());
-    } else {
-      WiFi.begin();
-    }
+    // WiFiManager stores credentials in flash automatically
+    WiFi.begin();
     nextReconnectAtMs = now + currentBackoffMs;
   }
 }
@@ -729,33 +688,21 @@ void setup() {
   loadConfig();
   syncTime();
 
-  // 1) kalau endpoint kosong -> paksa portal
-  if (CFG.endpoint.length() == 0) {
+  // Coba connect pakai kredensial yang tersimpan di WiFiManager
+  Serial.println("[WiFi] Connect dengan WiFi credentials tersimpan...");
+  WiFi.begin();
+
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
+    delay(250);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  // Kalau gagal connect -> buka portal untuk setup WiFi
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[WiFi] Gagal konek, buka AP...");
     runConfigPortalForced();
-  } else {
-    // 2) coba connect pakai kredensial yang kita simpan sendiri
-    if (CFG.wifiSsid.length()) {
-      Serial.printf("[WiFi] Connect pakai stored SSID: %s\n",
-                    CFG.wifiSsid.c_str());
-      WiFi.begin(CFG.wifiSsid.c_str(), CFG.wifiPass.c_str());
-    } else {
-      Serial.println("[WiFi] Tidak ada stored SSID, coba WiFi.begin() default");
-      WiFi.begin();
-    }
-
-    unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
-      delay(250);
-      Serial.print(".");
-    }
-    Serial.println();
-
-    // 3) kalau gagal -> buka portal untuk input ulang ssid/pass + endpoint
-    // tetap
-    if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("[WiFi] Gagal konek, buka AP...");
-      runConfigPortalForced();
-    }
   }
 
   nextReconnectAtMs = millis() + RECONNECT_BASE_MS;
